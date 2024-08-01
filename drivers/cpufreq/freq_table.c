@@ -33,38 +33,93 @@ bool policy_has_boost_freq(struct cpufreq_policy *policy)
 }
 EXPORT_SYMBOL_GPL(policy_has_boost_freq);
 
+static unsigned int freq_table_little[] = {
+    1017600,
+    1305600,
+    1612800,
+    1804800,
+    1900000, // Updated frequency
+};
+
+static unsigned int freq_table_big[] = {
+    902400,
+    1401600,
+    1536000,
+    1804800,
+    2016000,
+    2316000, // Updated frequency
+};
+
+// Function to remove duplicates from the frequency table
+static int remove_duplicates(unsigned int *freq_table, int size) {
+    int i, j;
+    for (i = 0; i < size - 1; i++) {
+        if (freq_table[i] == freq_table[i + 1]) {
+            for (j = i + 1; j < size - 1; j++) {
+                freq_table[j] = freq_table[j + 1];
+            }
+            size--;
+            i--;
+        }
+    }
+    return size;
+}
+
+// Helper function to populate cpufreq table based on cluster
+static void populate_cpufreq_table(struct cpufreq_frequency_table *table, unsigned int *freq_table, int size) {
+    int i;
+    size = remove_duplicates(freq_table, size); // Remove duplicates before filling the table
+    for (i = 0; i < size; i++) {
+        table[i].frequency = freq_table[i];
+        table[i].flags = 0; // Adjust flags as needed
+    }
+    table[size].frequency = CPUFREQ_TABLE_END; // End of table marker
+}
+
+// Function to fill in the cpufreq policy
 int cpufreq_frequency_table_cpuinfo(struct cpufreq_policy *policy,
-				    struct cpufreq_frequency_table *table)
-{
-	struct cpufreq_frequency_table *pos;
-	unsigned int min_freq = ~0;
-	unsigned int max_freq = 0;
-	unsigned int freq;
+                                    struct cpufreq_frequency_table *table) {
+    struct cpufreq_frequency_table *pos;
+    unsigned int min_freq = ~0;
+    unsigned int max_freq = 0;
+    unsigned int freq;
+    int table_size;
 
-	cpufreq_for_each_valid_entry(pos, table) {
-		freq = pos->frequency;
+    // Determine cluster and populate the cpufreq table accordingly
+    if (policy->cpu < 4) { // Assuming CPUs 0-3 are little cluster
+        table_size = ARRAY_SIZE(freq_table_little);
+        populate_cpufreq_table(table, freq_table_little, table_size);
+    } else if (policy->cpu < 8) { // Assuming CPUs 4-7 are big cluster
+        table_size = ARRAY_SIZE(freq_table_big);
+        populate_cpufreq_table(table, freq_table_big, table_size);
+    } else {
+        return -EINVAL; // Invalid CPU cluster
+    }
 
-		if (!cpufreq_boost_enabled()
-		    && (pos->flags & CPUFREQ_BOOST_FREQ))
-			continue;
+    // Determine min and max frequencies
+    cpufreq_for_each_valid_entry(pos, table) {
+        freq = pos->frequency;
 
-		pr_debug("table entry %u: %u kHz\n", (int)(pos - table), freq);
-		if (freq < min_freq)
-			min_freq = freq;
-		if (freq > max_freq)
-			max_freq = freq;
-	}
+        if (!cpufreq_boost_enabled() && (pos->flags & CPUFREQ_BOOST_FREQ))
+            continue;
 
-	policy->min = policy->cpuinfo.min_freq = min_freq;
-	policy->max = policy->cpuinfo.max_freq = max_freq;
+        pr_debug("table entry %u: %u kHz\n", (int)(pos - table), freq);
+        if (freq < min_freq)
+            min_freq = freq;
+        if (freq > max_freq)
+            max_freq = freq;
+    }
 
-	if (max_freq > cpuinfo_max_freq_cached)
-		cpuinfo_max_freq_cached = max_freq;
+    policy->min = policy->cpuinfo.min_freq = min_freq;
+    policy->max = policy->cpuinfo.max_freq = max_freq;
 
-	if (policy->min == ~0)
-		return -EINVAL;
-	else
-		return 0;
+    if (max_freq > cpuinfo_max_freq_cached)
+        cpuinfo_max_freq_cached = max_freq;
+
+    if (policy->min == ~0)
+        return -EINVAL;
+
+    return 0;
 }
 
 int cpufreq_frequency_table_verify(struct cpufreq_policy *policy,
@@ -146,9 +201,10 @@ int cpufreq_table_index_unsorted(struct cpufreq_policy *policy,
 		break;
 	}
 
-	cpufreq_for_each_valid_entry_idx(pos, table, i) {
+	cpufreq_for_each_valid_entry(pos, table) {
 		freq = pos->frequency;
 
+		i = pos - table;
 		if ((freq < policy->min) || (freq > policy->max))
 			continue;
 		if (freq == target_freq) {
@@ -213,16 +269,15 @@ int cpufreq_frequency_table_get_index(struct cpufreq_policy *policy,
 		unsigned int freq)
 {
 	struct cpufreq_frequency_table *pos, *table = policy->freq_table;
-	int idx;
 
 	if (unlikely(!table)) {
 		pr_debug("%s: Unable to find frequency table\n", __func__);
 		return -ENOENT;
 	}
 
-	cpufreq_for_each_valid_entry_idx(pos, table, idx)
+	cpufreq_for_each_valid_entry(pos, table)
 		if (pos->frequency == freq)
-			return idx;
+			return pos - table;
 
 	return -EINVAL;
 }
@@ -355,19 +410,19 @@ static int set_freq_table_sorted(struct cpufreq_policy *policy)
 	return 0;
 }
 
-int cpufreq_table_validate_and_sort(struct cpufreq_policy *policy)
+int cpufreq_table_validate_and_show(struct cpufreq_policy *policy,
+				      struct cpufreq_frequency_table *table)
 {
 	int ret;
 
-	if (!policy->freq_table)
-		return 0;
-
-	ret = cpufreq_frequency_table_cpuinfo(policy, policy->freq_table);
+	ret = cpufreq_frequency_table_cpuinfo(policy, table);
 	if (ret)
 		return ret;
 
+	policy->freq_table = table;
 	return set_freq_table_sorted(policy);
 }
+EXPORT_SYMBOL_GPL(cpufreq_table_validate_and_show);
 
 MODULE_AUTHOR("Dominik Brodowski <linux@brodo.de>");
 MODULE_DESCRIPTION("CPUfreq frequency table helpers");
