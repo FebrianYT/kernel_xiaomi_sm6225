@@ -34,20 +34,26 @@ bool policy_has_boost_freq(struct cpufreq_policy *policy)
 EXPORT_SYMBOL_GPL(policy_has_boost_freq);
 
 static unsigned int freq_table_little[] = {
-    1017600,
-    1305600,
-    1612800,
-    1804800,
-    1900000, // Updated frequency
+    300000,
+	691200,
+	940800, 
+	1190400, 
+	1516800, 
+	1804800, 
+	1900800,
+	2000800,
 };
 
 static unsigned int freq_table_big[] = {
-    902400,
-    1401600,
-    1536000,
-    1804800,
-    2016000,
-    2316000, // Updated frequency
+    300000,
+	806400, 
+	1056000, 
+	1344000, 
+	1766400, 
+	2208000, 
+	2400000,
+	2500000,
+
 };
 
 // Function to remove duplicates from the frequency table
